@@ -1,10 +1,15 @@
 from pathlib import Path
 import subprocess
+
+import numpy as np
+import torch
+from PIL import Image
 from transformers import pipeline
 
-from src.core.config import VIDEO_PATH, AUDIO_PATH, TRANSCRIPT_PATH, EMBEDDINGS_PATH
-from src.core.embeddings import TextEmbedder
-from src.core.search import SemanticSearch
+from src.core.config import VIDEO_PATH, AUDIO_PATH, TRANSCRIPT_PATH, TEXT_EMBEDDINGS_PATH, FRAMES_DIR, VISUAL_EMBEDDINGS_PATH
+from src.core.embeddings import TextEmbedder, VisualEmbedder, create_visual_embeddings
+from src.core.frame_extractor import extract_frames
+from src.core.search import SemanticSearch, VisualSearch
 from src.utils import require_file, save_json, load_json
 
 
@@ -93,7 +98,58 @@ def build_chunks(
 
     return chunks
 
+def test_siglip_search(
+    visual_embedder: VisualEmbedder,
+    frames: list[dict],
+    query: str,
+    batch_size: int = 8,
+    top_k: int = 5,
+) -> None:
+    results = []
+
+    for start in range(0, len(frames), batch_size):
+        batch_frames = frames[start:start + batch_size]
+
+        images = [
+            Image.open(frame["path"]).convert("RGB")
+            for frame in batch_frames
+        ]
+
+        inputs = visual_embedder.processor(
+            text=[query],
+            images=images,
+            padding="max_length",
+            return_tensors="pt",
+        ).to(visual_embedder.device)
+
+        with torch.inference_mode():
+            outputs = visual_embedder.model(**inputs)
+
+        scores = outputs.logits_per_text[0].cpu().numpy()
+
+        for frame, score in zip(batch_frames, scores):
+            results.append({
+                "score": float(score),
+                "timestamp": frame["timestamp"],
+                "path": frame["path"],
+            })
+
+    results.sort(
+        key=lambda result: result["score"],
+        reverse=True,
+    )
+
+    for result in results[:top_k]:
+        print(
+            result["score"],
+            result["timestamp"],
+            result["path"],
+        )
+
+        Image.open(result["path"]).show()
+
 def main():
+    """
     if TRANSCRIPT_PATH.is_file():
         transcript = load_json(Path(TRANSCRIPT_PATH))
     else:
@@ -116,19 +172,52 @@ def main():
     print("Model loaded")
     print("Encoding...")
 
-    search_engine = SemanticSearch(
-        embedder=embedder,
-        chunks=chunks,
-        embeddings_path=EMBEDDINGS_PATH,
+    search_engine = create_semantic_search(
+        embedder,
+        chunks,
+        EMBEDDINGS_PATH,
     )
 
-    results = search_engine.find("Где говорят про музей?")
+    results = search_engine.find(
+        "Где говорят про музей?"
+    )
 
     if results:
         for result in results:
             print(result)
     else:
         print("No results")
+    """
+
+    frames = extract_frames(
+        VIDEO_PATH,
+        FRAMES_DIR,
+        interval_s=4.0,
+    )
+
+    visual_embedder = VisualEmbedder()
+
+    visual_embeddings = create_visual_embeddings(
+        visual_embedder,
+        frames,
+        VISUAL_EMBEDDINGS_PATH,
+    )
+
+    visual_search = VisualSearch(
+        visual_embeddings,
+        frames,
+        visual_embedder,
+    )
+
+    results = visual_search.search(
+        "skyscraper",
+        top_k=5,
+    )
+
+    for result in results:
+        print(result)
+        Image.open(result["path"]).show()
+
 
 if __name__ == "__main__":
     main()
