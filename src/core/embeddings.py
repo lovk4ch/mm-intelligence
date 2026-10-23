@@ -159,7 +159,8 @@ def load_or_create_embeddings(
     print(f"Current embeddings hash for {str(embeddings_path)}"
           f": {current_hash}")
 
-    if (embeddings_path.is_file()
+    if (
+        embeddings_path.is_file()
         and hash_path.is_file()
         and hash_path.read_text(encoding="utf-8") == current_hash
     ):

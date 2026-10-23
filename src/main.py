@@ -1,15 +1,15 @@
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
-import numpy as np
 import torch
 from PIL import Image
 from transformers import pipeline
 
-from src.core.config import VIDEO_PATH, AUDIO_PATH, TRANSCRIPT_PATH, TEXT_EMBEDDINGS_PATH, FRAMES_DIR, VISUAL_EMBEDDINGS_PATH
-from src.core.embeddings import TextEmbedder, VisualEmbedder, create_visual_embeddings
+from src.core.config import VIDEO_PATH, AUDIO_PATH, TRANSCRIPT_PATH, TEXT_EMBEDDINGS_PATH, FRAMES_DIR, \
+    VISUAL_EMBEDDINGS_PATH
+from src.core.embeddings import TextEmbedder, VisualEmbedder
 from src.core.frame_extractor import extract_frames
-from src.core.search import SemanticSearch, VisualSearch
+from src.core.search import MultimodalSearch, create_semantic_search, create_visual_search
 from src.utils import require_file, save_json, load_json
 
 
@@ -149,45 +149,40 @@ def test_siglip_search(
         Image.open(result["path"]).show()
 
 def main():
-    """
+    # --- Text ---
+    print("[TEXT] Preparing transcript...")
+
     if TRANSCRIPT_PATH.is_file():
-        transcript = load_json(Path(TRANSCRIPT_PATH))
+        transcript = load_json(TRANSCRIPT_PATH)
     else:
         transcript = transcribe_audio(
             VIDEO_PATH,
-            AUDIO_PATH
+            AUDIO_PATH,
         )
         save_json(
             transcript,
-            Path(TRANSCRIPT_PATH)
+            TRANSCRIPT_PATH,
         )
 
-    words = transcript["chunks"]
-    chunks = build_chunks(words, max_duration=30)
+    chunks = build_chunks(
+        transcript["chunks"],
+        max_duration=30,
+    )
 
-    print("Loading embedding model...")
+    print("[TEXT] Loading model...")
+    text_embedder = TextEmbedder()
 
-    embedder = TextEmbedder()
-
-    print("Model loaded")
-    print("Encoding...")
-
-    search_engine = create_semantic_search(
-        embedder,
+    print("[TEXT] Preparing search...")
+    semantic_search = create_semantic_search(
+        text_embedder,
         chunks,
-        EMBEDDINGS_PATH,
+        TEXT_EMBEDDINGS_PATH,
     )
 
-    results = search_engine.find(
-        "Где говорят про музей?"
-    )
+    print(f"[TEXT] Ready: {len(chunks)} chunks")
 
-    if results:
-        for result in results:
-            print(result)
-    else:
-        print("No results")
-    """
+    # --- Visual ---
+    print("[VISUAL] Preparing frames...")
 
     frames = extract_frames(
         VIDEO_PATH,
@@ -195,28 +190,41 @@ def main():
         interval_s=4.0,
     )
 
+    print("[VISUAL] Loading model...")
     visual_embedder = VisualEmbedder()
 
-    visual_embeddings = create_visual_embeddings(
+    print("[VISUAL] Preparing search...")
+    visual_search = create_visual_search(
         visual_embedder,
         frames,
         VISUAL_EMBEDDINGS_PATH,
     )
 
-    visual_search = VisualSearch(
-        visual_embeddings,
-        frames,
-        visual_embedder,
+    print(f"[VISUAL] Ready: {len(frames)} frames")
+
+    # --- Multimodal ---
+    print("[MULTIMODAL] Initializing...")
+
+    multimodal_search = MultimodalSearch(
+        semantic_search,
+        visual_search,
     )
 
-    results = visual_search.search(
-        "skyscraper",
+    query = "anime toys"
+
+    print(f'[MULTIMODAL] Query: "{query}"')
+
+    results = multimodal_search.find(
+        query,
         top_k=5,
     )
 
+    print("\n[MULTIMODAL]")
     for result in results:
         print(result)
-        Image.open(result["path"]).show()
+
+        if result["frame_path"] is not None:
+            Image.open(result["frame_path"]).show()
 
 
 if __name__ == "__main__":
