@@ -61,6 +61,7 @@ class VisualSearch:
         self,
         query: str,
         top_k: int = 5,
+        min_score: float = 0.0,
     ) -> list[dict]:
         query_embedding = self.embedder.encode_text(query)
 
@@ -74,6 +75,7 @@ class VisualSearch:
                 "score": float(scores[i]),
             }
             for i in indices
+            if scores[i] >= min_score
         ]
 
 
@@ -110,14 +112,6 @@ class MultimodalSearch:
         visual_scores = normalize_scores(
             visual_results,
         )
-
-        print("\n[TEXT]")
-        for result in semantic_results:
-            print(result)
-
-        print("\n[VISUAL]")
-        for result in visual_results:
-            print(result)
 
         matches = []
 
